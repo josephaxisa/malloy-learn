@@ -12,10 +12,13 @@ The first step in any Malloy data modeling exercise is to declare your sources. 
 // users table at data/users.parquet
 source: users is duckdb.table('data/ecommerce/users.parquet')
 
-// Create a source for the rest of the tables in this dataset:
 
 // products
 source: products is duckdb.table('data/ecommerce/products.parquet')
+
+source: inventory_items is duckdb.table('data/ecommerce/inventory_items.parquet') {
+  join_many: products on product_id = products.product_id 
+}
 
 // orders
 source: orders is duckdb.table('data/ecommerce/orders.parquet') {
@@ -26,7 +29,14 @@ source: orders is duckdb.table('data/ecommerce/orders.parquet') {
 source: items is duckdb.table('data/ecommerce/items.parquet') {
   join_one: orders on order_id = orders.order_id
   join_one: products on product_id = products.product_id
-}
+
+  query: top_5_brands is {
+    group_by: products.brand
+        aggregate: brand_revenue is sum(sale_price)
+        order_by: brand_revenue desc 
+        limit: 5
+  }
+}        
 >>>markdown
 ## Step 1: Warmup
 
@@ -36,14 +46,23 @@ run: users -> {
   group_by: gender
   aggregate: user_count is count()
 }
+
+run: inventory_items -> {
+  group_by: product_id
+  aggregate: product_count is count()
+}
+
+run: inventory_items ->  {
+  aggregate: product_count is count() { where: product_id = 20552 }
+}
 >>>markdown
 Now your turn to try. Write a query that calculates the count of orders by status.
 >>>malloy
 // Calculate the count of orders by status:
 
-// run: orders -> {
-//   ...
-// }
+run: items -> {
+  aggregate: status_count is count()
+}
 >>>markdown
 ## Step 2: Joins
 In this data model, `items` and `orders` are related fact tables, and the `users` and `products` tables are dimensions that join in. Update the sources above to include these joins:
@@ -54,27 +73,65 @@ In this data model, `items` and `orders` are related fact tables, and the `users
 ## Step 3: Using Joins
 Now that we have the joins modeled, let's run a query that takes advantage of them. For each product category, find the average age of users who ordered from that category.
 >>>malloy
-// Compute the average age of users who ordered from each category
+run: items -> {
+  group_by: products.category
+  aggregate: user_average_age is avg(orders.users.age)
+}
 >>>markdown
 ## Step 4: Calculating Percent of Total
 Malloy makes "percent of total" calculations very easy. For each product category, what is the total revenue, and calculate the percent of overall revenue.
 >>>malloy
 // Compute revenue for each product category, as well as percent of revenue relative to overall
+run: items -> {
+    group_by: products.category
+    aggregate: 
+        product_revenue is sum(sale_price)
+        # percent
+        percent_of_total_revenue is sum(sale_price)/all(sum(sale_price))
+}
 >>>markdown
 ## Step 6: Nested Query
 The above query shows us revenue numbers per product category. Let's drill in deeper with a nested query. Can you add a `nest` to this query to show the top 5 brands by revenue for each category?
 >>>malloy
-// For each product category, show top 5 brands by revenue
+run: items -> {
+    group_by: products.category
+    aggregate: 
+        product_revenue is sum(sale_price)
+        # percent
+        percent_of_total_revenue is sum(sale_price)/all(sum(sale_price))
+    nest: top_5 is {
+        group_by: products.brand
+        aggregate: brand_revenue is sum(sale_price)
+        order_by: brand_revenue desc 
+        limit: 5
+    }
+}
 >>>markdown
 ## Step 8: Saving this query
 Update the data model to save the "top brands" query directly onto the source. Now modify what you previously wrote to use this saved query.
 >>>malloy
-// Update what you previously wrote to use a saved query from the Source
+run: items -> {
+    group_by: products.category
+    aggregate: 
+        product_revenue is sum(sale_price)
+        # percent
+        percent_of_total_revenue is sum(sale_price)/all(sum(sale_price))
+    nest: top_5_brands
+}
 >>>markdown
 ## Step 9: Refining a Saved Query
 Try using a query refinement to take the analysis further. Perhaps you can filter to only look at top brands where the `department` is Men or Women? Or perhaps you want to only look at brands with products above a certain `retail_price` threshold?
 >>>malloy
-// Update this query again to include a refinement
+run: items -> {
+    group_by: products.category
+    aggregate: 
+        product_revenue is sum(sale_price)
+        # percent
+        percent_of_total_revenue is sum(sale_price)/all(sum(sale_price))
+    nest: top_5_brands refine { 
+     where: products.department = 'Men'   
+    }
+}
 >>>markdown
 ## Step 10: Keep Exploring!
 There are a handful of other datasets in this repository that are ready for modeling, exploration, and analysis. Take what you've learned here and try to apply it to another dataset in the `data` subfolder. Or better yet, find a dataset relevant to your day-to-day work and use Malloy to model and analyze it!
